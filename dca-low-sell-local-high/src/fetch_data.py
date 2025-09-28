@@ -1,10 +1,18 @@
 import requests
 import pandas as pd
 import time
+import os
 from datetime import datetime, timedelta
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+API_KEY = os.getenv("COINGECKO_API_KEY")
+
+if not API_KEY:
+    raise ValueError("❌ API key not found. Please add COINGECKO_API_KEY to your .env file")
 
 # Config
-API_KEY = "YOUR_COINGECKO_API_KEY"  # 👈 insert your CoinGecko API key here
 COIN_ID = "solana"
 VS_CURRENCY = "usd"
 OUTPUT_FILE = "./data/solana_hourly.csv"
@@ -50,7 +58,7 @@ while chunk_start < end:
     # Move to next chunk
     chunk_start = chunk_end
 
-    # Respect rate limit (50–100 calls/min depending on plan)
+    # Respect rate limit
     time.sleep(2)
 
 # Save final result
