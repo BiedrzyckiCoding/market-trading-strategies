@@ -5,62 +5,72 @@ import os
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
-# Load environment variables
-load_dotenv()
-API_KEY = os.getenv("COINGECKO_API_KEY")
+from utils.fetch_chunk import fetch_chunk
 
+# Load CryptoCompare API key from .env
+load_dotenv()
+API_KEY = os.getenv("CRYPTOCOMPARE_API_KEY")
 if not API_KEY:
-    raise ValueError("❌ API key not found. Please add COINGECKO_API_KEY to your .env file")
+    raise ValueError("❌ API key not found. Please add CRYPTOCOMPARE_API_KEY to your .env file")
 
 # Config
-COIN_ID = "solana"
-VS_CURRENCY = "usd"
-OUTPUT_FILE = "./data/solana_hourly.csv"
+OUTPUT_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "solana_hourly.csv")
+os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
 
-# Date range
-start = datetime(2024, 6, 1)
-end = datetime(2025, 6, 1)
+SYMBOL = "SOL"
+CURRENCY = "USD"
+LIMIT = 2000  # max data points per request
+HISTORICAL = True  # fetch historical data until a target start date
+START_DATE = datetime(2024, 6, 1)
 
-# Prepare DataFrame
-df = pd.DataFrame(columns=["timestamp", "price"])
+# Base endpoint
+BASE_URL = "https://min-api.cryptocompare.com/data/v2/histohour"
 
-# Endpoint
-BASE_URL = f"https://pro-api.coingecko.com/api/v3/coins/{COIN_ID}/market_chart/range"
+# DataFrame to store results
+df = pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
 
-# Break into 90-day chunks (CoinGecko limit)
-chunk_start = start
-while chunk_start < end:
-    chunk_end = min(chunk_start + timedelta(days=90), end)
-
+# Helper function to fetch one chunk
+def fetch_chunk(to_ts):
     params = {
-        "vs_currency": VS_CURRENCY,
-        "from": int(chunk_start.timestamp()),
-        "to": int(chunk_end.timestamp())
+        "fsym": SYMBOL,
+        "tsym": CURRENCY,
+        "limit": LIMIT - 1,  # CryptoCompare returns limit+1 rows
+        "toTs": int(to_ts.timestamp()),
+        "api_key": API_KEY
     }
+    r = requests.get(BASE_URL, params=params)
+    r.raise_for_status()
+    return r.json()
 
-    headers = {"x-cg-pro-api-key": API_KEY}
-
+# Fetch historical data in chunks
+to_ts = datetime.utcnow()
+while to_ts > START_DATE:
     try:
-        r = requests.get(BASE_URL, params=params, headers=headers, timeout=15)
-        r.raise_for_status()
-        data = r.json()
+        data = fetch_chunk(to_ts)
+        hist = data["Data"]["Data"]
+        if not hist:
+            print(f"⚠ No data returned for {to_ts}")
+            break
 
-        # "prices" is a list of [timestamp_ms, price]
-        for ts, price in data.get("prices", []):
-            ts_dt = datetime.utcfromtimestamp(ts / 1000)
-            df.loc[len(df)] = [ts_dt.isoformat(), price]
+        # Convert to DataFrame
+        chunk_df = pd.DataFrame(hist)
+        chunk_df["timestamp"] = pd.to_datetime(chunk_df["time"], unit="s")
+        chunk_df = chunk_df[["timestamp", "open", "high", "low", "close", "volumefrom"]]
+        chunk_df.rename(columns={"volumefrom": "volume"}, inplace=True)
 
-        print(f"Fetched {chunk_start.date()} → {chunk_end.date()}, rows={len(data.get('prices', []))}")
+        df = pd.concat([chunk_df, df], ignore_index=True)  # prepend older data
 
-    except Exception as e:
-        print(f"Error fetching {chunk_start.date()} → {chunk_end.date()}: {e}")
+        # Prepare next chunk (oldest timestamp - 1 hour)
+        oldest_ts = chunk_df["timestamp"].min()
+        to_ts = oldest_ts - pd.Timedelta(hours=1)
+        print(f"✅ Fetched chunk ending {oldest_ts}, total rows={len(df)}")
 
-    # Move to next chunk
-    chunk_start = chunk_end
+        time.sleep(1)  # respect rate limits
 
-    # Respect rate limit
-    time.sleep(2)
+    except requests.RequestException as e:
+        print(f"❌ Error fetching data: {e}, retrying in 5s...")
+        time.sleep(5)
 
-# Save final result
+# Save CSV
 df.to_csv(OUTPUT_FILE, index=False)
-print(f"✅ Done! Saved {len(df)} rows to {OUTPUT_FILE}")
+print(f"🎉 Done! Saved {len(df)} rows to {OUTPUT_FILE}")
