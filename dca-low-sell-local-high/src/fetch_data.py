@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 API_KEY = "YOUR_COINGECKO_API_KEY"  # 👈 insert your CoinGecko API key here
 COIN_ID = "solana"
 VS_CURRENCY = "usd"
-OUTPUT_FILE = "solana_hourly.csv"
+OUTPUT_FILE = "./data/solana_hourly.csv"
 
 # Date range
 start = datetime(2024, 6, 1)
